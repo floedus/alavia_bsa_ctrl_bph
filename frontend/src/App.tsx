@@ -13,13 +13,16 @@ import {
   deleteAudit as apiDeleteAudit,
   deleteControllerActivity as apiDeleteControllerActivity,
   deleteController as apiDeleteController,
+  deleteDocument as apiDeleteDocument,
   deleteShipActivity as apiDeleteShipActivity,
   deleteShip as apiDeleteShip,
   deleteUser as apiDeleteUser,
   fetchBootstrap,
+  getDocumentDownloadUrl,
   login as apiLogin,
   moveControllerTimelineBlock,
   moveShipTimelineBlock,
+  uploadAuditDocuments as apiUploadAuditDocuments,
   updateAudit,
   updateController,
   updateFleetPeriodicity,
@@ -164,7 +167,10 @@ function cloneRecords(records: AuditRecord[]) {
 function cloneDocumentGroups(groups: ShipDocumentGroup[]) {
   return groups.map((group) => ({
     ...group,
-    documents: group.documents.map((document) => ({ ...document }))
+    audits: group.audits.map((audit) => ({
+      ...audit,
+      documents: audit.documents.map((document) => ({ ...document }))
+    }))
   }));
 }
 
@@ -198,6 +204,17 @@ function documentKindLabel(kind: ShipDocument["kind"]) {
       return "CR a chaud";
     default:
       return "Annexe";
+  }
+}
+
+function uploadDocumentTypeLabel(kind: UploadDocumentType) {
+  switch (kind) {
+    case "cr_chaud":
+      return "Compte-rendu a chaud";
+    case "cr":
+      return "Compte-rendu d'audit";
+    default:
+      return "Autre document";
   }
 }
 
@@ -235,6 +252,16 @@ function canEditOwnControllerTimeline(role: UserRole) {
   return role === "administrateur" || role === "controleur_planificateur" || role === "controleur";
 }
 
+function canUploadDocuments(role: UserRole) {
+  return role === "administrateur" || role === "controleur_planificateur" || role === "controleur";
+}
+
+function canDeleteDocuments(role: UserRole) {
+  return role === "administrateur";
+}
+
+type UploadDocumentType = "cr_chaud" | "cr" | "annexe";
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppNavigationItem>("Planification BPH");
   const [planningDate, setPlanningDate] = useState("2026-04-20");
@@ -262,6 +289,10 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [auditFormError, setAuditFormError] = useState<string | null>(null);
   const [timelineActionError, setTimelineActionError] = useState<string | null>(null);
+  const [documentActionError, setDocumentActionError] = useState<string | null>(null);
+  const [documentBusyAuditId, setDocumentBusyAuditId] = useState<string | null>(null);
+  const [documentUploadAuditId, setDocumentUploadAuditId] = useState<string | null>(null);
+  const [documentUploadType, setDocumentUploadType] = useState<UploadDocumentType>("annexe");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [newUser, setNewUser] = useState({
     username: "",
@@ -377,6 +408,99 @@ export default function App() {
     [platforms]
   );
 
+  function renderDocumentAuditCards(group: ShipDocumentGroup) {
+    if (group.audits.length === 0) {
+      return <div className="document-empty-state">Aucun audit documente pour ce navire.</div>;
+    }
+
+    return group.audits.map((audit) => (
+      <section key={audit.auditId} className="document-audit-card">
+        <div className="document-audit-head">
+          <div className="document-audit-main">
+            <strong>{audit.auditTitle}</strong>
+            <span>
+              {formatDisplayDateFromIso(audit.auditDate)} • {audit.auditStatus === "validated" ? "audit valide" : "audit planifie"}
+            </span>
+          </div>
+          {canUploadDocuments(currentUser.role) ? (
+            <div className="document-upload-stack">
+              <button
+                type="button"
+                className="document-upload-button"
+                title="Televerser un document"
+                onClick={() => {
+                  setDocumentActionError(null);
+                  setDocumentUploadAuditId((current) => (current === audit.auditId ? null : audit.auditId));
+                }}
+              >
+                {documentBusyAuditId === audit.auditId ? "..." : "⇪"}
+              </button>
+              {documentUploadAuditId === audit.auditId ? (
+                <div className="document-upload-popover">
+                  <label className="mission-form">
+                    <span className="section-label">Type de document</span>
+                    <select
+                      value={documentUploadType}
+                      onChange={(event) => setDocumentUploadType(event.target.value as UploadDocumentType)}
+                    >
+                      <option value="cr_chaud">Compte-rendu a chaud</option>
+                      <option value="cr">Compte-rendu d'audit</option>
+                      <option value="annexe">Autre document</option>
+                    </select>
+                  </label>
+                  <label className="document-file-picker">
+                    <span>{uploadDocumentTypeLabel(documentUploadType)}</span>
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(event) => {
+                        void uploadAuditDocuments(audit.auditId, event.target.files, documentUploadType);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="document-card-grid">
+          {audit.documents.length > 0 ? audit.documents.map((document) => (
+            <article key={document.id} className="document-card">
+              <a
+                className="document-download"
+                href={backendAvailable ? getDocumentDownloadUrl(document.id, currentUserId) : "#"}
+                title="Telecharger"
+                onClick={(event) => {
+                  if (!backendAvailable) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                ↓
+              </a>
+              {canDeleteDocuments(currentUser.role) ? (
+                <button
+                  type="button"
+                  className="document-delete"
+                  title="Supprimer"
+                  onClick={() => void deleteDocument(document.id)}
+                >
+                  ×
+                </button>
+              ) : null}
+              <strong>{document.title}</strong>
+              <span>{documentKindLabel(document.kind)}</span>
+              <span>{formatDisplayDateFromIso(document.date)}</span>
+            </article>
+          )) : (
+            <div className="document-empty-state">Aucun document associe a cet audit.</div>
+          )}
+        </div>
+      </section>
+    ));
+  }
+
   async function submitLogin() {
     setAuthError(null);
     setLoading(true);
@@ -404,6 +528,50 @@ export default function App() {
     setFleetRecords(cloneRecords(auditTable));
     setShipDocuments(cloneDocumentGroups(documentGroups));
     setUsers(mockUsers);
+  }
+
+  async function uploadAuditDocuments(auditId: string, files: FileList | null, documentType: UploadDocumentType) {
+    if (!files || files.length === 0 || !backendAvailable) {
+      return;
+    }
+
+    setDocumentActionError(null);
+    setDocumentBusyAuditId(auditId);
+
+    try {
+      const documents = await Promise.all(
+        Array.from(files).map(async (file) => ({
+          name: file.name,
+          title: file.name,
+          mimeType: file.type || "application/octet-stream",
+          base64: await fileToBase64(file),
+          documentType
+        }))
+      );
+
+      await apiUploadAuditDocuments(auditId, { currentUserId, documents });
+      setDocumentUploadAuditId(null);
+      await refreshData(currentUserId);
+    } catch (error) {
+      setDocumentActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDocumentBusyAuditId(null);
+    }
+  }
+
+  async function deleteDocument(documentId: string) {
+    if (!backendAvailable) {
+      return;
+    }
+
+    setDocumentActionError(null);
+
+    try {
+      await apiDeleteDocument(documentId, currentUserId);
+      await refreshData(currentUserId);
+    } catch (error) {
+      setDocumentActionError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function moveBlock(
@@ -1092,6 +1260,7 @@ export default function App() {
             </div>
           </section>
         </main>
+        <div className="app-credit">Développement - Conception Codex : CV Florian Edus</div>
       </div>
     );
   }
@@ -1108,27 +1277,7 @@ export default function App() {
           </div>
         </div>
         <div className="hero-actions hero-actions-stack">
-          <label className="session-switcher" hidden>
-            <span>Profil connecte</span>
-            <select
-              value={currentUserId}
-              onChange={async (event) => {
-                const nextId = event.target.value;
-                setCurrentUserId(nextId);
-                if (backendAvailable) {
-                  await refreshData(nextId);
-                }
-              }}
-            >
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.displayName} • {roleLabel(user.role)}
-                </option>
-              ))}
-            </select>
-          </label>
           <button className="secondary-button" onClick={logout}>Deconnexion</button>
-          <button className="secondary-button">Exporter le tableau flotte</button>
         </div>
       </header>
 
@@ -1391,12 +1540,18 @@ export default function App() {
               <div className="panel-header">
                 <div>
                   <p className="eyebrow">Archivage</p>
-                  <h2>Documents classes par navire</h2>
+                  <h2>Documents classes par navire et par audit</h2>
                 </div>
                 <div className="date-chip">
                   {currentUser.role === "officier_avia_bph" ? "Historique limite au bateau associe" : "Espaces documentaires replies par defaut"}
                 </div>
               </div>
+              {documentActionError ? (
+                <div className="auth-banner auth-banner-subtle">
+                  <strong>Documents</strong>
+                  <span>{documentActionError}</span>
+                </div>
+              ) : null}
               <div className="documents-tree">
                 {visibleDocuments.map((group) => {
                   const expanded = expandedShipId === group.shipId;
@@ -1420,14 +1575,9 @@ export default function App() {
                             <button className="secondary-button compact-button">{group.latestReport}</button>
                             <button className="secondary-button compact-button">{group.latestHotReport}</button>
                           </div>
-                          <ul className="simple-list">
-                            {group.documents.map((document) => (
-                              <li key={document.id}>
-                                {document.title}
-                                <span>{documentKindLabel(document.kind)} • {formatDisplayDateFromIso(document.date)} • {document.status}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          <div className="document-audit-stack">
+                            {renderDocumentAuditCards(group)}
+                          </div>
                         </div>
                       ) : null}
                     </section>
@@ -1744,6 +1894,7 @@ export default function App() {
           ) : null}
         </section>
       </main>
+      <div className="app-credit">Développement - Conception Codex : CV Florian Edus</div>
     </div>
   );
 }

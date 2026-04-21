@@ -1,6 +1,6 @@
 import type { AppUserProfile, TimelineBlock } from "./types";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8081/api";
+const apiBaseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8081/api").replace(/\/$/, "");
 
 async function request(path: string, init?: RequestInit) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -100,6 +100,23 @@ export function deleteAudit(id: string) {
   return request(`/audits/${id}`, {
     method: "DELETE"
   });
+}
+
+export function uploadAuditDocuments(auditId: string, payload: Record<string, unknown>) {
+  return request(`/audits/${auditId}/documents`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteDocument(id: string, currentUserId: string) {
+  return request(`/documents/${id}?userId=${encodeURIComponent(currentUserId)}`, {
+    method: "DELETE"
+  });
+}
+
+export function getDocumentDownloadUrl(id: string, currentUserId: string) {
+  return `${apiBaseUrl}/documents/${id}/download?userId=${encodeURIComponent(currentUserId)}`;
 }
 
 export function updateController(id: string, payload: Record<string, unknown>) {

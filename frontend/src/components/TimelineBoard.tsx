@@ -500,14 +500,20 @@ function TimelineLane({
   }
 
   function buildCreatedBlock(category: CreationCategory, timestamp: number): TimelineBlock {
+    const start = timestampToIso(timestamp, "2026-01-01T08:00");
+    const end = timestampToIso(timestamp + minimumBlockDurationMs, "2026-01-02T18:00");
     return {
       id: `${resource.id}-${category.code}-${timestamp}`,
       code: category.code,
       title: category.label,
-      start: timestampToIso(timestamp, "2026-01-01T08:00"),
-      end: timestampToIso(timestamp + minimumBlockDurationMs, "2026-01-02T18:00"),
+      start,
+      end,
       status: category.status ?? "warning",
       kind: category.kind ?? "unavailability",
+      controllerDepartureAt: category.kind === "audit" ? start : undefined,
+      controlStartAt: category.kind === "audit" ? start : undefined,
+      controlEndAt: category.kind === "audit" ? end : undefined,
+      returnToMainlandAt: category.kind === "audit" ? end : undefined,
       activityCategory: category.code,
       constraintStatus: category.constraintStatus ?? (category.kind === "audit" ? undefined : "blocking"),
       detail: category.kind === "audit" ? `${category.label} a confirmer` : `${category.label} declaree`

@@ -53,7 +53,16 @@ export type ShipDocument = {
   title: string;
   kind: "cr" | "cr_chaud" | "annexe";
   date: string;
-  status: "diffuse" | "brouillon" | "validation";
+  status: "diffuse" | "brouillon" | "validation" | "archive";
+  auditId?: string;
+};
+
+export type ShipDocumentAuditGroup = {
+  auditId: string;
+  auditTitle: string;
+  auditStatus: "planned" | "validated";
+  auditDate: string;
+  documents: ShipDocument[];
 };
 
 export type ShipDocumentGroup = {
@@ -62,7 +71,7 @@ export type ShipDocumentGroup = {
   shipCode: string;
   latestReport: string;
   latestHotReport: string;
-  documents: ShipDocument[];
+  audits: ShipDocumentAuditGroup[];
 };
 
 export type UserRole =

@@ -1,14 +1,18 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { pool, query } from "./db.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, "..", "..");
 const app = express();
 const port = Number(process.env.PORT ?? 8081);
-const storageRoot = path.resolve(process.cwd(), "storage", "documents");
+const storageRoot = path.resolve(projectRoot, "storage", "documents");
 
 app.use(cors({ origin: true, credentials: false }));
 app.use(express.json());
@@ -88,6 +92,18 @@ function inferDocumentType(filename) {
   return "annexe";
 }
 
+function normalizeDocumentType(value, fallbackName = "") {
+  switch (value) {
+    case "cr":
+    case "cr_chaud":
+    case "annexe":
+    case "reference":
+      return value;
+    default:
+      return inferDocumentType(fallbackName);
+  }
+}
+
 function bufferFromBase64(content) {
   const sanitized = String(content ?? "").includes(",") ? String(content).split(",").pop() : String(content ?? "");
   return Buffer.from(sanitized, "base64");
@@ -150,6 +166,51 @@ function normalizeUserRole(value) {
     default:
       return "controleur";
   }
+}
+
+function canUploadDocuments(role) {
+  return role === "administrateur" || role === "controleur" || role === "controleur_planificateur";
+}
+
+function canDeleteDocuments(role) {
+  return role === "administrateur";
+}
+
+function canReadShipDocuments(actor, shipId) {
+  if (!actor) {
+    return false;
+  }
+
+  if (actor.role === "officier_avia_bph") {
+    return actor.shipId === shipId;
+  }
+
+  return true;
+}
+
+async function getActorProfile(userId) {
+  if (!userId) {
+    return null;
+  }
+
+  const normalizedUserId = String(userId);
+
+  const rows = await query(
+    `
+      SELECT
+        u.id,
+        r.code::text AS role,
+        u.ship_id AS "shipId"
+      FROM users u
+      JOIN user_roles ur ON ur.user_id = u.id
+      JOIN roles r ON r.id = ur.role_id
+      WHERE u.id = $1 AND u.active = TRUE
+      LIMIT 1
+    `,
+    [normalizedUserId]
+  );
+
+  return rows[0] ?? null;
 }
 
 function parseAuditDate(value) {
@@ -319,6 +380,49 @@ async function storeArchiveDocuments({ shipId, shipCode, auditId, documents, doc
         document.mimeType ?? "application/octet-stream",
         checksum,
         documentDate,
+        uploadedByUserId ?? null
+      ]
+    );
+  }
+}
+
+async function storeAuditDocuments({ shipId, shipCode, auditId, auditDate, documents, uploadedByUserId }) {
+  if (!Array.isArray(documents) || documents.length === 0) {
+    return;
+  }
+
+  const shipFolder = normalizeStorageSegment(shipCode || shipId);
+  const auditFolder = normalizeStorageSegment(`${auditDate || "audit"}_${String(auditId).slice(-8)}`);
+  const auditDirectory = path.join(storageRoot, shipFolder, "audits", auditFolder);
+  await mkdir(auditDirectory, { recursive: true });
+
+  for (const document of documents) {
+    const safeName = String(document.name ?? "document")
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+      .trim() || "document";
+    const fileBuffer = bufferFromBase64(document.base64);
+    const checksum = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+    const storedFilename = `${Date.now()}-${safeName}`;
+    const absolutePath = path.join(auditDirectory, storedFilename);
+    const relativePath = path.join("storage", "documents", shipFolder, "audits", auditFolder, storedFilename).replace(/\\/g, "/");
+
+    await writeFile(absolutePath, fileBuffer);
+
+    await query(
+      `
+        INSERT INTO documents (
+          ship_id, audit_id, document_type, status, title, storage_path, mime_type, checksum, version, document_date, uploaded_by_user_id
+        ) VALUES ($1, $2, $3::document_type_code, 'brouillon', $4, $5, $6, $7, 1, $8, $9)
+      `,
+      [
+        shipId,
+        auditId,
+        normalizeDocumentType(document.documentType, document.name),
+        document.title ?? safeName,
+        relativePath,
+        document.mimeType ?? "application/octet-stream",
+        checksum,
+        auditDate,
         uploadedByUserId ?? null
       ]
     );
@@ -630,10 +734,24 @@ async function getDocumentGroups() {
     ORDER BY s.name
   `);
 
+  const audits = await query(`
+    SELECT
+      a.id AS "auditId",
+      a.ship_id AS "shipId",
+      a.title AS "auditTitle",
+      a.status::text AS "auditStatus",
+      a.control_end_at::date::text AS "auditDate"
+    FROM audits a
+    JOIN ships s ON s.id = a.ship_id
+    WHERE s.active = TRUE
+    ORDER BY a.ship_id, a.control_end_at DESC NULLS LAST, a.control_start_at DESC NULLS LAST, a.created_at DESC
+  `);
+
   const docs = await query(`
     SELECT
       d.id,
       d.ship_id AS "shipId",
+      d.audit_id AS "auditId",
       d.title,
       d.document_type::text AS kind,
       d.document_date::text AS date,
@@ -644,7 +762,15 @@ async function getDocumentGroups() {
 
   return ships.map((ship) => ({
     ...ship,
-    documents: docs.filter((doc) => doc.shipId === ship.shipId)
+    audits: audits
+      .filter((audit) => audit.shipId === ship.shipId)
+      .map((audit) => ({
+        auditId: audit.auditId,
+        auditTitle: audit.auditTitle,
+        auditStatus: toAuditStatus(audit.auditStatus),
+        auditDate: audit.auditDate,
+        documents: docs.filter((doc) => doc.shipId === ship.shipId && doc.auditId === audit.auditId)
+      }))
   }));
 }
 
@@ -1152,6 +1278,136 @@ app.patch("/api/retention-settings", async (req, res, next) => {
       [Math.max(1, Number(req.body.autoDeleteDelayDays ?? 180))]
     );
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/audits/:id/documents", async (req, res, next) => {
+  try {
+    const actor = await getActorProfile(req.body.currentUserId);
+
+    if (!actor || !canUploadDocuments(actor.role)) {
+      res.status(403).json({ error: "Le profil courant ne peut pas televerser de documents." });
+      return;
+    }
+
+    const auditRows = await query(
+      `
+        SELECT
+          a.id,
+          a.ship_id AS "shipId",
+          s.code AS "shipCode",
+          a.control_end_at::date::text AS "auditDate"
+        FROM audits a
+        JOIN ships s ON s.id = a.ship_id
+        WHERE a.id = $1
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+
+    if (!auditRows[0]) {
+      res.status(404).json({ error: "Audit introuvable." });
+      return;
+    }
+
+    if (!canReadShipDocuments(actor, auditRows[0].shipId)) {
+      res.status(403).json({ error: "Acces refuse a cet espace documentaire." });
+      return;
+    }
+
+    await storeAuditDocuments({
+      shipId: auditRows[0].shipId,
+      shipCode: auditRows[0].shipCode,
+      auditId: req.params.id,
+      auditDate: auditRows[0].auditDate ?? new Date().toISOString().slice(0, 10),
+      documents: req.body.documents,
+      uploadedByUserId: actor.id
+    });
+
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/documents/:id/download", async (req, res, next) => {
+  try {
+    const actor = await getActorProfile(req.query.userId);
+
+    if (!actor) {
+      res.status(403).json({ error: "Acces refuse." });
+      return;
+    }
+
+    const rows = await query(
+      `
+        SELECT
+          d.id,
+          d.ship_id AS "shipId",
+          d.title,
+          d.storage_path AS "storagePath",
+          d.mime_type AS "mimeType"
+        FROM documents d
+        WHERE d.id = $1
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+
+    if (!rows[0]) {
+      res.status(404).json({ error: "Document introuvable." });
+      return;
+    }
+
+    if (!canReadShipDocuments(actor, rows[0].shipId)) {
+      res.status(403).json({ error: "Acces refuse a ce document." });
+      return;
+    }
+
+    const absolutePath = path.resolve(projectRoot, rows[0].storagePath);
+    if (!absolutePath.startsWith(storageRoot)) {
+      res.status(400).json({ error: "Chemin de stockage invalide." });
+      return;
+    }
+
+    res.type(rows[0].mimeType || "application/octet-stream");
+    res.download(absolutePath, rows[0].title);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/documents/:id", async (req, res, next) => {
+  try {
+    const actor = await getActorProfile(req.query.userId);
+
+    if (!actor || !canDeleteDocuments(actor.role)) {
+      res.status(403).json({ error: "Seul un administrateur peut supprimer un document." });
+      return;
+    }
+
+    const rows = await query(
+      `
+        DELETE FROM documents
+        WHERE id = $1
+        RETURNING storage_path AS "storagePath"
+      `,
+      [req.params.id]
+    );
+
+    if (!rows[0]) {
+      res.status(404).json({ error: "Document introuvable." });
+      return;
+    }
+
+    const absolutePath = path.resolve(projectRoot, rows[0].storagePath);
+    if (absolutePath.startsWith(storageRoot)) {
+      await unlink(absolutePath).catch(() => undefined);
+    }
+
+    res.status(204).send();
   } catch (error) {
     next(error);
   }

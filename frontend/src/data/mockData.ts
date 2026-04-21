@@ -222,10 +222,18 @@ export const documentGroups: ShipDocumentGroup[] = [
     shipCode: "PHA TON",
     latestReport: "CR-2026-014",
     latestHotReport: "CRH-2026-014",
-    documents: [
-      { id: "doc-ton-1", title: "CR-2026-014", kind: "cr", date: "2026-01-05", status: "diffuse" },
-      { id: "doc-ton-2", title: "CRH-2026-014", kind: "cr_chaud", date: "2026-01-05", status: "diffuse" },
-      { id: "doc-ton-3", title: "ANN-2026-014-A", kind: "annexe", date: "2026-01-06", status: "validation" }
+    audits: [
+      {
+        auditId: "audit-ton-2026-014",
+        auditTitle: "Audit BPH 2026-014",
+        auditStatus: "validated",
+        auditDate: "2026-01-05",
+        documents: [
+          { id: "doc-ton-1", auditId: "audit-ton-2026-014", title: "CR-2026-014", kind: "cr", date: "2026-01-05", status: "diffuse" },
+          { id: "doc-ton-2", auditId: "audit-ton-2026-014", title: "CRH-2026-014", kind: "cr_chaud", date: "2026-01-05", status: "diffuse" },
+          { id: "doc-ton-3", auditId: "audit-ton-2026-014", title: "ANN-2026-014-A", kind: "annexe", date: "2026-01-06", status: "validation" }
+        ]
+      }
     ]
   },
   {
@@ -234,9 +242,17 @@ export const documentGroups: ShipDocumentGroup[] = [
     shipCode: "PHA MIS",
     latestReport: "CR-2025-089",
     latestHotReport: "CRH-2025-089",
-    documents: [
-      { id: "doc-mis-1", title: "CR-2025-089", kind: "cr", date: "2025-11-12", status: "diffuse" },
-      { id: "doc-mis-2", title: "CRH-2025-089", kind: "cr_chaud", date: "2025-11-12", status: "diffuse" }
+    audits: [
+      {
+        auditId: "audit-mis-2025-089",
+        auditTitle: "Audit BPH 2025-089",
+        auditStatus: "validated",
+        auditDate: "2025-11-12",
+        documents: [
+          { id: "doc-mis-1", auditId: "audit-mis-2025-089", title: "CR-2025-089", kind: "cr", date: "2025-11-12", status: "diffuse" },
+          { id: "doc-mis-2", auditId: "audit-mis-2025-089", title: "CRH-2025-089", kind: "cr_chaud", date: "2025-11-12", status: "diffuse" }
+        ]
+      }
     ]
   },
   {
@@ -245,9 +261,17 @@ export const documentGroups: ShipDocumentGroup[] = [
     shipCode: "PHA DIX",
     latestReport: "CR-2026-021",
     latestHotReport: "CRH-2026-021",
-    documents: [
-      { id: "doc-dix-1", title: "CR-2026-021", kind: "cr", date: "2026-04-18", status: "validation" },
-      { id: "doc-dix-2", title: "CRH-2026-021", kind: "cr_chaud", date: "2026-04-18", status: "diffuse" }
+    audits: [
+      {
+        auditId: "audit-dix-2026-021",
+        auditTitle: "Audit BPH 2026-021",
+        auditStatus: "validated",
+        auditDate: "2026-04-18",
+        documents: [
+          { id: "doc-dix-1", auditId: "audit-dix-2026-021", title: "CR-2026-021", kind: "cr", date: "2026-04-18", status: "validation" },
+          { id: "doc-dix-2", auditId: "audit-dix-2026-021", title: "CRH-2026-021", kind: "cr_chaud", date: "2026-04-18", status: "diffuse" }
+        ]
+      }
     ]
   }
 ];
