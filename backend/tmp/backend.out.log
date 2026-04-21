@@ -1,0 +1,5 @@
+
+> alavia-bsa-ctrl-bph-backend@0.0.1 dev
+> node src/server.js
+
+API backend disponible sur http://127.0.0.1:8081

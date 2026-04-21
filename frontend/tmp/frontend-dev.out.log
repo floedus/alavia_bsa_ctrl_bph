@@ -1,0 +1,21 @@
+
+> alavia-bsa-ctrl-bph-frontend@0.0.1 dev
+> vite --host 127.0.0.1 --port 4173
+
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m666[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m4173[22m/[39m
+[2m16:15:59[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:16:13[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/styles/app.css[22m
+[2m16:16:56[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:18:22[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:18:32[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:19:59[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m16:23:49[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:29:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m16:29:40[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
+[2m16:30:52[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m16:31:08[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/styles/app.css[22m
+[2m16:31:37[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m16:33:23[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/TimelineBoard.tsx[22m
