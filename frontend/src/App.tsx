@@ -10,6 +10,7 @@ import {
   createShipActivity as apiCreateShipActivity,
   createShipAudit as apiCreateShipAudit,
   createUser as apiCreateUser,
+  deleteAudit as apiDeleteAudit,
   deleteControllerActivity as apiDeleteControllerActivity,
   deleteController as apiDeleteController,
   deleteShipActivity as apiDeleteShipActivity,
@@ -84,6 +85,71 @@ function fromDateValue(value: string) {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+function validateAuditChronology(block: TimelineBlock) {
+  const departure = new Date(block.controllerDepartureAt ?? "");
+  const controlStart = new Date(block.controlStartAt ?? block.start ?? "");
+  const controlEnd = new Date(block.controlEndAt ?? block.end ?? "");
+  const returnToMainland = new Date(block.returnToMainlandAt ?? "");
+
+  if (
+    Number.isNaN(departure.getTime()) ||
+    Number.isNaN(controlStart.getTime()) ||
+    Number.isNaN(controlEnd.getTime()) ||
+    Number.isNaN(returnToMainland.getTime())
+  ) {
+    return "Toutes les dates de l'audit doivent etre renseignees.";
+  }
+
+  if (departure > controlStart) {
+    return "La mise en route doit etre inferieure ou egale au debut d'audit.";
+  }
+
+  if (controlStart > controlEnd) {
+    return "Le debut d'audit doit etre inferieur ou egal a la fin d'audit.";
+  }
+
+  if (controlEnd > returnToMainland) {
+    return "La fin d'audit doit etre inferieure ou egale au retour metropole.";
+  }
+
+  return null;
+}
+
+function recalculateAuditBlockFromTimelineRange(block: TimelineBlock, nextRangeStart: string, nextRangeEnd: string): TimelineBlock {
+  if (block.kind !== "audit") {
+    return { ...block, start: nextRangeStart, end: nextRangeEnd };
+  }
+
+  const oldDeparture = new Date(block.controllerDepartureAt ?? block.start);
+  const oldControlStart = new Date(block.controlStartAt ?? block.start);
+  const oldControlEnd = new Date(block.controlEndAt ?? block.end);
+  const oldReturn = new Date(block.returnToMainlandAt ?? block.end);
+  const nextDeparture = new Date(nextRangeStart);
+  const nextReturn = new Date(nextRangeEnd);
+
+  const prepDuration = Math.max(0, oldControlStart.getTime() - oldDeparture.getTime());
+  const returnDuration = Math.max(0, oldReturn.getTime() - oldControlEnd.getTime());
+  const nextTotalDuration = Math.max(0, nextReturn.getTime() - nextDeparture.getTime());
+
+  let nextControlStart = new Date(nextDeparture.getTime() + prepDuration);
+  let nextControlEnd = new Date(nextReturn.getTime() - returnDuration);
+
+  if (nextTotalDuration < prepDuration + returnDuration || nextControlEnd.getTime() < nextControlStart.getTime()) {
+    nextControlStart = new Date(nextDeparture);
+    nextControlEnd = new Date(nextReturn);
+  }
+
+  return {
+    ...block,
+    controllerDepartureAt: nextDeparture.toISOString(),
+    start: nextControlStart.toISOString(),
+    controlStartAt: nextControlStart.toISOString(),
+    end: nextControlEnd.toISOString(),
+    controlEndAt: nextControlEnd.toISOString(),
+    returnToMainlandAt: nextReturn.toISOString()
+  };
+}
+
 function cloneResources(resources: TimelineResource[]) {
   return resources.map((resource) => ({
     ...resource,
@@ -118,6 +184,10 @@ function buildPlatformCaption(resource: TimelineResource) {
 
   const location = resource.caption.split("•")[0]?.trim() ?? resource.caption;
   return `${location} • echeance ${formatDisplayDateFromIso(resource.deadlineDate)}`;
+}
+
+function editableShipDescription(caption: string) {
+  return caption.split("â€¢")[0]?.trim() ?? caption;
 }
 
 function documentKindLabel(kind: ShipDocument["kind"]) {
@@ -186,9 +256,12 @@ export default function App() {
   const [newShip, setNewShip] = useState({ code: "", label: "", caption: "", periodicityMonths: 12, lastAuditDate: "" });
   const [newController, setNewController] = useState({ code: "", label: "", caption: "" });
   const [newShipArchiveFiles, setNewShipArchiveFiles] = useState<File[]>([]);
+  const [shipCreateError, setShipCreateError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [auditFormError, setAuditFormError] = useState<string | null>(null);
+  const [timelineActionError, setTimelineActionError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [newUser, setNewUser] = useState({
     username: "",
@@ -242,6 +315,17 @@ export default function App() {
       setActiveTab(availableNavItems[0]);
     }
   }, [activeTab, availableNavItems]);
+
+  useEffect(() => {
+    setAuditFormError(null);
+  }, [selectedBlock?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "Planification BPH" && planningShipId !== null) {
+      setPlanningShipId(null);
+      setPlanningScrollRatio(0);
+    }
+  }, [activeTab, planningShipId]);
 
   const visiblePlatforms = useMemo(() => {
     if (currentUser.role === "officier_avia_bph" && currentUser.shipId) {
@@ -330,18 +414,31 @@ export default function App() {
     start: string,
     end: string
   ) {
+    let movedBlock: TimelineBlock | null = null;
+
     setter((current) =>
       current.map((resource) =>
         resource.id !== resourceId
           ? resource
           : {
               ...resource,
-              blocks: resource.blocks.map((block) => (block.id === blockId ? { ...block, start, end } : block))
+              blocks: resource.blocks.map((block) => {
+                if (block.id !== blockId) {
+                  return block;
+                }
+
+                const nextBlock =
+                  scope === "ships"
+                    ? recalculateAuditBlockFromTimelineRange(block, start, end)
+                    : { ...block, start, end };
+                movedBlock = nextBlock;
+                return nextBlock;
+              })
             }
       )
     );
 
-    setSelectedBlock((current) => (current && current.id === blockId ? { ...current, start, end } : current));
+    setSelectedBlock((current) => (current && current.id === blockId ? movedBlock ?? current : current));
 
     if (backendAvailable) {
       if (scope === "ships") {
@@ -353,7 +450,7 @@ export default function App() {
     }
   }
 
-  async function updatePeriodicity(shipId: string, periodicityMonths: number) {
+  function updatePeriodicityLocally(shipId: string, periodicityMonths: number) {
     const sanitizedMonths = Math.max(1, periodicityMonths || 1);
 
     setFleetRecords((current) =>
@@ -386,41 +483,48 @@ export default function App() {
         };
       })
     );
+  }
 
+  async function persistPeriodicity(shipId: string, periodicityMonths: number) {
+    const sanitizedMonths = Math.max(1, periodicityMonths || 1);
     if (backendAvailable) {
       await updateFleetPeriodicity(shipId, sanitizedMonths);
       await refreshData(currentUserId);
     }
   }
 
-  async function updatePlatformResource(resourceId: string, field: "label" | "code" | "caption", value: string) {
+  function updatePlatformResourceLocally(resourceId: string, field: "label" | "code" | "caption", value: string) {
     setPlatforms((current) =>
       current.map((resource) => (resource.id === resourceId ? { ...resource, [field]: value } : resource))
     );
+  }
 
+  async function persistPlatformResource(resourceId: string) {
     if (backendAvailable) {
       const resource = platforms.find((item) => item.id === resourceId);
       await updateShip(resourceId, {
-        code: field === "code" ? value : resource?.code,
-        label: field === "label" ? value : resource?.label,
-        caption: field === "caption" ? value : resource?.caption,
+        code: resource?.code,
+        label: resource?.label,
+        caption: editableShipDescription(resource?.caption ?? ""),
         periodicityMonths: resource?.periodicityMonths
       });
       await refreshData(currentUserId);
     }
   }
 
-  async function updateControllerResource(resourceId: string, field: "label" | "code" | "caption", value: string) {
+  function updateControllerResourceLocally(resourceId: string, field: "label" | "code" | "caption", value: string) {
     setControllers((current) =>
       current.map((resource) => (resource.id === resourceId ? { ...resource, [field]: value } : resource))
     );
+  }
 
+  async function persistControllerResource(resourceId: string) {
     if (backendAvailable) {
       const resource = controllers.find((item) => item.id === resourceId);
       await updateController(resourceId, {
-        code: field === "code" ? value : resource?.code,
-        label: field === "label" ? value : resource?.label,
-        caption: field === "caption" ? value : resource?.caption
+        code: resource?.code,
+        label: resource?.label,
+        caption: resource?.caption
       });
       await refreshData(currentUserId);
     }
@@ -445,9 +549,13 @@ export default function App() {
     }
   }
 
-  async function saveRetentionDays(value: number) {
+  function updateRetentionDaysLocally(value: number) {
     const sanitized = Math.max(1, value || 1);
     setRetentionDays(sanitized);
+  }
+
+  async function persistRetentionDays(value: number) {
+    const sanitized = Math.max(1, value || 1);
     if (backendAvailable) {
       await updateRetentionSettings(sanitized);
       await refreshData(currentUserId);
@@ -455,21 +563,33 @@ export default function App() {
   }
 
   async function createShipBlock(resourceId: string, block: TimelineBlock) {
+    const nextBlock = { ...block, resourceCode: resourceId };
+
+    if (block.kind === "audit") {
+      const chronologyError = validateAuditChronology(nextBlock);
+      if (chronologyError) {
+        setAuditFormError(chronologyError);
+        setSelectedBlock(nextBlock);
+        return;
+      }
+      setAuditFormError(null);
+    }
+
     setPlatforms((current) =>
       current.map((resource) =>
         resource.id !== resourceId
           ? resource
           : {
               ...resource,
-              blocks: [...resource.blocks, block]
+              blocks: [...resource.blocks, nextBlock]
             }
       )
     );
-    setSelectedBlock(block);
+    setSelectedBlock(nextBlock);
 
     if (backendAvailable) {
-      const payload = { ...block, createdByUserId: currentUserId };
-      if (block.kind === "audit") {
+      const payload = { ...nextBlock, createdByUserId: currentUserId };
+      if (nextBlock.kind === "audit") {
         await apiCreateShipAudit(resourceId, payload);
       } else {
         await apiCreateShipActivity(resourceId, payload);
@@ -479,6 +599,25 @@ export default function App() {
   }
 
   async function deleteShipBlock(resourceId: string, blockId: string) {
+    const targetBlock = platforms
+      .find((resource) => resource.id === resourceId)
+      ?.blocks.find((block) => block.id === blockId);
+
+    if (backendAvailable) {
+      try {
+        if (targetBlock?.kind === "audit") {
+          await apiDeleteAudit(blockId);
+        } else {
+          await apiDeleteShipActivity(resourceId, blockId);
+        }
+        setTimelineActionError(null);
+        await refreshData(currentUserId);
+      } catch (error) {
+        setTimelineActionError(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
     setPlatforms((current) =>
       current.map((resource) =>
         resource.id !== resourceId
@@ -489,12 +628,13 @@ export default function App() {
             }
       )
     );
+    setControllers((current) =>
+      current.map((resource) => ({
+        ...resource,
+        blocks: resource.blocks.filter((block) => block.id !== blockId)
+      }))
+    );
     setSelectedBlock((current) => (current?.id === blockId ? null : current));
-
-    if (backendAvailable) {
-      await apiDeleteShipActivity(resourceId, blockId);
-      await refreshData(currentUserId);
-    }
   }
 
   async function createShipRecord() {
@@ -505,8 +645,11 @@ export default function App() {
     const lastAuditDate = newShip.lastAuditDate.trim();
 
     if (!code || !label) {
+      setShipCreateError("Le code et le nom du batiment sont obligatoires.");
       return;
     }
+
+    setShipCreateError(null);
 
     const archiveDocuments = await Promise.all(
       newShipArchiveFiles.map(async (file) => ({
@@ -518,10 +661,14 @@ export default function App() {
     );
 
     if (backendAvailable) {
-      await apiCreateShip({ code, label, caption, periodicityMonths, lastAuditDate: lastAuditDate || null, archiveDocuments, currentUserId });
-      setNewShip({ code: "", label: "", caption: "", periodicityMonths: 12, lastAuditDate: "" });
-      setNewShipArchiveFiles([]);
-      await refreshData(currentUserId);
+      try {
+        await apiCreateShip({ code, label, caption, periodicityMonths, lastAuditDate: lastAuditDate || null, archiveDocuments, currentUserId });
+        setNewShip({ code: "", label: "", caption: "", periodicityMonths: 12, lastAuditDate: "" });
+        setNewShipArchiveFiles([]);
+        await refreshData(currentUserId);
+      } catch (error) {
+        setShipCreateError(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
 
@@ -532,7 +679,7 @@ export default function App() {
         id,
         code,
         label,
-        caption: caption || "Port-base a definir",
+        caption,
         periodicityMonths,
         lastAuditDate: lastAuditDate || undefined,
         blocks: []
@@ -555,6 +702,7 @@ export default function App() {
     ]);
     setNewShip({ code: "", label: "", caption: "", periodicityMonths: 12, lastAuditDate: "" });
     setNewShipArchiveFiles([]);
+    setShipCreateError(null);
   }
 
   async function removeShipRecord(shipId: string) {
@@ -637,6 +785,14 @@ export default function App() {
       start: selectedBlock.controlStartAt ?? selectedBlock.start,
       end: selectedBlock.controlEndAt ?? selectedBlock.end
     };
+    const chronologyError = validateAuditChronology(nextBlock);
+
+    if (chronologyError) {
+      setAuditFormError(chronologyError);
+      return;
+    }
+
+    setAuditFormError(null);
 
     setPlatforms((current) =>
       current.map((resource) => ({
@@ -734,6 +890,11 @@ export default function App() {
             <div className="date-chip">{selectedResourceLabel}</div>
             {canEditSelectedAudit ? (
               <>
+                {auditFormError ? (
+                  <div className="auth-banner auth-banner-subtle">
+                    <span>{auditFormError}</span>
+                  </div>
+                ) : null}
                 <label className="mission-form">
                   <span className="section-label">Intitule de l'audit</span>
                   <input
@@ -826,28 +987,39 @@ export default function App() {
                   </label>
                   <label className="mission-form">
                     <span className="section-label">Controleurs affectes</span>
-                    <select
-                      multiple
-                      value={selectedBlock.assignedControllerIds ?? []}
-                      onChange={(event) => {
-                        const values = Array.from(event.target.selectedOptions).map((option) => option.value);
-                        setSelectedBlock((current) =>
-                          current && current.kind === "audit"
-                            ? {
-                                ...current,
-                                assignedControllerIds: values,
-                                crew: controllerOptions.filter((option) => values.includes(option.id)).map((option) => option.label)
-                              }
-                            : current
+                    <div className="checkbox-list">
+                      {controllerOptions.map((controller) => {
+                        const checked = (selectedBlock.assignedControllerIds ?? []).includes(controller.id);
+                        return (
+                          <label key={controller.id} className="checkbox-list-item">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                const currentIds = selectedBlock.assignedControllerIds ?? [];
+                                const nextIds = event.target.checked
+                                  ? [...currentIds, controller.id]
+                                  : currentIds.filter((id) => id !== controller.id);
+                                const uniqueIds = [...new Set(nextIds)];
+
+                                setSelectedBlock((current) =>
+                                  current && current.kind === "audit"
+                                    ? {
+                                        ...current,
+                                        assignedControllerIds: uniqueIds,
+                                        crew: controllers
+                                          .filter((entry) => uniqueIds.includes(entry.id))
+                                          .map((entry) => entry.label)
+                                      }
+                                    : current
+                                );
+                              }}
+                            />
+                            <span>{controller.label}</span>
+                          </label>
                         );
-                      }}
-                    >
-                      {controllerOptions.map((controller) => (
-                        <option key={controller.id} value={controller.id}>
-                          {controller.label}
-                        </option>
-                      ))}
-                    </select>
+                      })}
+                    </div>
                   </label>
                 </div>
                 <label className="mission-form">
@@ -861,7 +1033,6 @@ export default function App() {
                   />
                 </label>
                 <div className="ship-card-actions">
-                  <div className="date-chip">{selectedBlock.code}</div>
                   <div className={`status ${selectedBlock.status}`}>{selectedBlock.status}</div>
                   <button type="button" className="primary-button compact-button" onClick={() => void saveSelectedAuditDetails()}>
                     Enregistrer l'audit
@@ -933,11 +1104,6 @@ export default function App() {
           <div>
             <p className="eyebrow">Marine Nationale • ALAVIA</p>
             <h1>Planification BSA des controles aeronautiques BPH</h1>
-            <p className="hero-copy">
-              Poste de conduite unifie pour suivre les echeances de controle, affecter les controleurs,
-              visualiser les indisponibilites et preparer les audits dans un cadre graphique strictement
-              aligne sur les patterns ICARE du dossier `transfert_ui`.
-            </p>
             <p className="hero-context">{sessionSummary}</p>
           </div>
         </div>
@@ -961,7 +1127,6 @@ export default function App() {
               ))}
             </select>
           </label>
-          <button className="primary-button" onClick={() => void refreshData(currentUserId)}>Synchroniser les donnees</button>
           <button className="secondary-button" onClick={logout}>Deconnexion</button>
           <button className="secondary-button">Exporter le tableau flotte</button>
         </div>
@@ -974,6 +1139,15 @@ export default function App() {
             <span>
               Synchronisation impossible avec l'API. Erreur: {loadError}
             </span>
+          </div>
+        </section>
+      ) : null}
+
+      {timelineActionError ? (
+        <section className="panel">
+          <div className="auth-banner auth-banner-subtle">
+            <strong>Action impossible</strong>
+            <span>{timelineActionError}</span>
           </div>
         </section>
       ) : null}
@@ -1045,7 +1219,7 @@ export default function App() {
                     title="Frise commune de planification"
                     eyebrow="Repere mutualise"
                     date={planningDate}
-                    timezoneLabel="Theatre France ? UTC +02:00"
+                    timezoneLabel="Theatre France • UTC +02:00"
                     zoom={timelineZoom}
                     resources={[]}
                     selectedBlockId={selectedBlock?.id ?? null}
@@ -1059,10 +1233,10 @@ export default function App() {
                   />
 
                   <TimelineBoard
-                    title={`Frise navire ? ${selectedShipForPlanning.label}`}
+                    title={`Frise navire • ${selectedShipForPlanning.label}`}
                     eyebrow="Audit a planifier"
                     date={planningDate}
-                    timezoneLabel="Theatre France ? UTC +02:00"
+                    timezoneLabel="Theatre France • UTC +02:00"
                     zoom={timelineZoom}
                     resources={[selectedShipForPlanning]}
                     selectedBlockId={selectedBlock?.id ?? null}
@@ -1078,6 +1252,7 @@ export default function App() {
                     creationCategories={canPlanAudits(currentUser.role) ? auditCreationCategories : []}
                     onCreateBlock={canPlanAudits(currentUser.role) ? (resourceId, block) => void createShipBlock(resourceId, { ...block, kind: "audit", status: "planned" }) : undefined}
                     onDeleteBlock={(resourceId, blockId) => void deleteShipBlock(resourceId, blockId)}
+                    canDeleteBlock={(block) => block.kind !== "audit" || block.status === "planned"}
                   />
 
                   {visibleControllers.length ? (
@@ -1085,7 +1260,7 @@ export default function App() {
                       title="Frises controleurs"
                       eyebrow="Lecture croisee"
                       date={planningDate}
-                      timezoneLabel="Theatre France ? UTC +02:00"
+                      timezoneLabel="Theatre France • UTC +02:00"
                       zoom={timelineZoom}
                       resources={visibleControllers}
                       selectedBlockId={selectedBlock?.id ?? null}
@@ -1125,6 +1300,7 @@ export default function App() {
                     creationCategories={currentUser.role === "controleur" || currentUser.role === "officier_avia_bph" ? [] : shipCreationCategories}
                     onCreateBlock={currentUser.role === "controleur" || currentUser.role === "officier_avia_bph" ? undefined : (resourceId, block) => void createShipBlock(resourceId, block)}
                     onDeleteBlock={(resourceId, blockId) => void deleteShipBlock(resourceId, blockId)}
+                    canDeleteBlock={(block) => block.kind !== "audit"}
                   />
                   {renderSelectedBlockPanel()}
                 </>
@@ -1266,36 +1442,6 @@ export default function App() {
               <section className="panel">
                 <div className="panel-header">
                   <div>
-                    <p className="eyebrow">Parametrage</p>
-                    <h2>Configuration metier</h2>
-                  </div>
-                </div>
-                <div className="form-grid">
-                  <label className="mission-form">
-                    <span className="section-label">Delai de purge automatique</span>
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={retentionDays}
-                      onChange={(event) => void saveRetentionDays(Number(event.target.value))}
-                    />
-                  </label>
-                  <DateTimeStepper
-                    label="Prochaine bascule planning"
-                    value="2026-04-20T08:00"
-                    onChange={() => undefined}
-                    stepMinutes={30}
-                  />
-                </div>
-                <p className="section-label">
-                  La purge automatique ne concerne que les activites navires et controleurs hors audits. Les audits et les documents ne sont jamais purges automatiquement.
-                </p>
-              </section>
-
-              <section className="panel">
-                <div className="panel-header">
-                  <div>
                     <p className="eyebrow">Referentiel flotte</p>
                     <h2>Base des batiments</h2>
                   </div>
@@ -1347,6 +1493,11 @@ export default function App() {
                   </button>
                   {newShipArchiveFiles.length ? <span className="date-chip">{newShipArchiveFiles.length} document(s) pret(s)</span> : null}
                 </div>
+                {shipCreateError ? (
+                  <div className="auth-banner auth-banner-subtle">
+                    <span>{shipCreateError}</span>
+                  </div>
+                ) : null}
                 <div className="activity-table-scroll">
                   <table className="data-table activity-table">
                     <thead>
@@ -1361,16 +1512,17 @@ export default function App() {
                     <tbody>
                       {platforms.map((ship) => (
                         <tr key={ship.id}>
-                          <td><input value={ship.code} onChange={(event) => void updatePlatformResource(ship.id, "code", event.target.value)} /></td>
-                          <td><input value={ship.label} onChange={(event) => void updatePlatformResource(ship.id, "label", event.target.value)} /></td>
-                          <td><input value={ship.caption} onChange={(event) => void updatePlatformResource(ship.id, "caption", event.target.value)} /></td>
+                          <td><input value={ship.code} onChange={(event) => updatePlatformResourceLocally(ship.id, "code", event.target.value)} onBlur={() => void persistPlatformResource(ship.id)} /></td>
+                          <td><input value={ship.label} onChange={(event) => updatePlatformResourceLocally(ship.id, "label", event.target.value)} onBlur={() => void persistPlatformResource(ship.id)} /></td>
+                          <td><input value={editableShipDescription(ship.caption)} onChange={(event) => updatePlatformResourceLocally(ship.id, "caption", event.target.value)} onBlur={() => void persistPlatformResource(ship.id)} /></td>
                           <td>
                             <input
                               type="number"
                               min={1}
                               step={1}
                               value={ship.periodicityMonths ?? 1}
-                              onChange={(event) => void updatePeriodicity(ship.id, Number(event.target.value))}
+                              onChange={(event) => updatePeriodicityLocally(ship.id, Number(event.target.value))}
+                              onBlur={(event) => void persistPeriodicity(ship.id, Number(event.target.value))}
                             />
                           </td>
                           <td>
@@ -1394,7 +1546,7 @@ export default function App() {
                 </div>
                 <div className="form-grid">
                   <label className="mission-form">
-                    <span className="section-label">Code</span>
+                    <span className="section-label">Matricule</span>
                     <input value={newController.code} onChange={(event) => setNewController((current) => ({ ...current, code: event.target.value }))} />
                   </label>
                   <label className="mission-form">
@@ -1415,7 +1567,7 @@ export default function App() {
                   <table className="data-table activity-table">
                     <thead>
                       <tr>
-                        <th>Code</th>
+                        <th>Matricule</th>
                         <th>Nom</th>
                         <th>Fonction</th>
                         <th>Actions</th>
@@ -1424,9 +1576,9 @@ export default function App() {
                     <tbody>
                       {controllers.map((controller) => (
                         <tr key={controller.id}>
-                          <td><input value={controller.code} onChange={(event) => void updateControllerResource(controller.id, "code", event.target.value)} /></td>
-                          <td><input value={controller.label} onChange={(event) => void updateControllerResource(controller.id, "label", event.target.value)} /></td>
-                          <td><input value={controller.caption} onChange={(event) => void updateControllerResource(controller.id, "caption", event.target.value)} /></td>
+                          <td><input value={controller.code} onChange={(event) => updateControllerResourceLocally(controller.id, "code", event.target.value)} onBlur={() => void persistControllerResource(controller.id)} /></td>
+                          <td><input value={controller.label} onChange={(event) => updateControllerResourceLocally(controller.id, "label", event.target.value)} onBlur={() => void persistControllerResource(controller.id)} /></td>
+                          <td><input value={controller.caption} onChange={(event) => updateControllerResourceLocally(controller.id, "caption", event.target.value)} onBlur={() => void persistControllerResource(controller.id)} /></td>
                           <td>
                             <button type="button" className="secondary-button compact-button" onClick={() => void removeControllerRecord(controller.id)}>
                               Supprimer
@@ -1437,6 +1589,37 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
+              </section>
+
+              <section className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Parametrage</p>
+                    <h2>Configuration metier</h2>
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <label className="mission-form">
+                    <span className="section-label">Delai de purge automatique</span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={retentionDays}
+                      onChange={(event) => updateRetentionDaysLocally(Number(event.target.value))}
+                      onBlur={(event) => void persistRetentionDays(Number(event.target.value))}
+                    />
+                  </label>
+                  <DateTimeStepper
+                    label="Prochaine bascule planning"
+                    value="2026-04-20T08:00"
+                    onChange={() => undefined}
+                    stepMinutes={30}
+                  />
+                </div>
+                <p className="section-label">
+                  La purge automatique ne concerne que les activites navires et controleurs hors audits. Les audits et les documents ne sont jamais purges automatiquement.
+                </p>
               </section>
             </section>
           ) : null}

@@ -152,6 +152,64 @@ function normalizeUserRole(value) {
   }
 }
 
+function parseAuditDate(value) {
+  const date = new Date(value ?? "");
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function validateAuditChronology({ controllerDepartureAt, controlStartAt, controlEndAt, returnToMainlandAt }) {
+  const departure = parseAuditDate(controllerDepartureAt);
+  const controlStart = parseAuditDate(controlStartAt);
+  const controlEnd = parseAuditDate(controlEndAt);
+  const returnToMainland = parseAuditDate(returnToMainlandAt);
+
+  if (!departure || !controlStart || !controlEnd || !returnToMainland) {
+    return "Toutes les dates d'audit doivent etre renseignees.";
+  }
+
+  if (departure > controlStart) {
+    return "La date de mise en route doit etre inferieure ou egale a la date de debut d'audit.";
+  }
+
+  if (controlStart > controlEnd) {
+    return "La date de debut d'audit doit etre inferieure ou egale a la date de fin d'audit.";
+  }
+
+  if (controlEnd > returnToMainland) {
+    return "La date de fin d'audit doit etre inferieure ou egale a la date de retour metropole.";
+  }
+
+  return null;
+}
+
+function recalculateAuditDatesForTimelineRange(auditRow, nextRangeStart, nextRangeEnd) {
+  const oldDeparture = new Date(auditRow.controller_departure_at);
+  const oldControlStart = new Date(auditRow.control_start_at);
+  const oldControlEnd = new Date(auditRow.control_end_at);
+  const oldReturn = new Date(auditRow.return_to_mainland_at);
+  const nextDeparture = new Date(nextRangeStart);
+  const nextReturn = new Date(nextRangeEnd);
+
+  const prepDuration = Math.max(0, oldControlStart.getTime() - oldDeparture.getTime());
+  const returnDuration = Math.max(0, oldReturn.getTime() - oldControlEnd.getTime());
+  const nextTotalDuration = Math.max(0, nextReturn.getTime() - nextDeparture.getTime());
+
+  let nextControlStart = new Date(nextDeparture.getTime() + prepDuration);
+  let nextControlEnd = new Date(nextReturn.getTime() - returnDuration);
+
+  if (nextTotalDuration < prepDuration + returnDuration || nextControlEnd.getTime() < nextControlStart.getTime()) {
+    nextControlStart = new Date(nextDeparture);
+    nextControlEnd = new Date(nextReturn);
+  }
+
+  return {
+    controllerDepartureAt: nextDeparture.toISOString(),
+    controlStartAt: nextControlStart.toISOString(),
+    controlEndAt: nextControlEnd.toISOString(),
+    returnToMainlandAt: nextReturn.toISOString()
+  };
+}
+
 async function replaceAuditControllers(client, auditId, controllerIds) {
   await client.query("DELETE FROM audit_controllers WHERE audit_id = $1", [auditId]);
 
@@ -183,7 +241,19 @@ async function bindUserAssociations(client, userId, roleCode, controllerId, ship
 
   if (normalizedRole === "controleur" || normalizedRole === "controleur_planificateur") {
     if (controllerId) {
+      const existingRows = await client.query("SELECT user_id FROM controllers WHERE id = $1", [controllerId]);
+      const previousUserId = existingRows.rows[0]?.user_id ?? null;
       await client.query("UPDATE controllers SET user_id = $2, updated_at = NOW() WHERE id = $1", [controllerId, userId]);
+      if (previousUserId && previousUserId !== userId) {
+        await client.query(
+          `
+            UPDATE users
+            SET active = FALSE, updated_at = NOW()
+            WHERE id = $1 AND password_hash = 'pending-setup'
+          `,
+          [previousUserId]
+        );
+      }
     }
   } else {
     await client.query("UPDATE controllers SET updated_at = NOW() WHERE user_id = $1", [userId]);
@@ -273,6 +343,7 @@ async function getUsers() {
     LEFT JOIN ships s ON s.id = u.ship_id
     LEFT JOIN controllers c ON c.user_id = u.id
     WHERE u.active = TRUE
+      AND u.password_hash <> 'pending-setup'
     ORDER BY u.display_name
   `);
 }
@@ -655,19 +726,54 @@ app.post("/api/ships", async (req, res, next) => {
     const { code, label, caption, periodicityMonths, lastAuditDate, archiveDocuments, currentUserId } = req.body;
     const shipCode = String(code ?? "").trim();
     const shipLabel = String(label ?? "").trim();
-    const homePort = String(caption ?? "").trim() || "Port-base a definir";
+    const homePort = String(caption ?? "").trim();
     const months = Math.max(1, Number(periodicityMonths ?? 1));
 
     await client.query("BEGIN");
-    const shipRows = await client.query(
+    const existingRows = await client.query(
       `
-        INSERT INTO ships (code, name, home_port, audit_periodicity_months)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id
+        SELECT id, active
+        FROM ships
+        WHERE code = $1
+        LIMIT 1
       `,
-      [shipCode, shipLabel, homePort, months]
+      [shipCode]
     );
-    const shipId = shipRows.rows[0].id;
+
+    let shipId;
+    if (existingRows.rowCount > 0) {
+      if (existingRows.rows[0].active) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "Un batiment avec ce code existe deja." });
+        return;
+      }
+
+      shipId = existingRows.rows[0].id;
+      await client.query(
+        `
+          UPDATE ships
+          SET
+            name = $2,
+            home_port = $3,
+            audit_periodicity_months = $4,
+            active = TRUE,
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [shipId, shipLabel, homePort, months]
+      );
+    } else {
+      const shipRows = await client.query(
+        `
+          INSERT INTO ships (code, name, home_port, audit_periodicity_months)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id
+        `,
+        [shipCode, shipLabel, homePort, months]
+      );
+      shipId = shipRows.rows[0].id;
+    }
+
     let auditId = null;
 
     await mkdir(path.join(storageRoot, normalizeStorageSegment(shipCode || shipId)), { recursive: true });
@@ -797,6 +903,17 @@ app.post("/api/ships/:id/audits", async (req, res, next) => {
     const controlEnd = new Date(block.controlEndAt ?? block.end ?? end);
     const returnToMainland = new Date(block.returnToMainlandAt ?? block.end ?? end);
     const controllerIds = normalizeControllerIds(block.assignedControllerIds);
+    const chronologyError = validateAuditChronology({
+      controllerDepartureAt: departure.toISOString(),
+      controlStartAt: controlStart.toISOString(),
+      controlEndAt: controlEnd.toISOString(),
+      returnToMainlandAt: returnToMainland.toISOString()
+    });
+
+    if (chronologyError) {
+      res.status(400).json({ error: chronologyError });
+      return;
+    }
 
     await client.query("BEGIN");
     const rows = await client.query(
@@ -843,6 +960,17 @@ app.patch("/api/audits/:id", async (req, res, next) => {
       status,
       assignedControllerIds
     } = req.body;
+    const chronologyError = validateAuditChronology({
+      controllerDepartureAt,
+      controlStartAt,
+      controlEndAt,
+      returnToMainlandAt
+    });
+
+    if (chronologyError) {
+      res.status(400).json({ error: chronologyError });
+      return;
+    }
 
     await client.query("BEGIN");
     await client.query(
@@ -888,6 +1016,29 @@ app.patch("/api/audits/:id", async (req, res, next) => {
   }
 });
 
+app.delete("/api/audits/:id", async (req, res, next) => {
+  try {
+    const rows = await query(
+      `
+        DELETE FROM audits
+        WHERE id = $1
+          AND status = 'programme'
+        RETURNING id
+      `,
+      [req.params.id]
+    );
+
+    if (rows.length === 0) {
+      res.status(409).json({ error: "Seuls les audits planifies peuvent etre supprimes." });
+      return;
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/controllers", async (req, res, next) => {
   const client = await pool.connect();
   try {
@@ -896,11 +1047,9 @@ app.post("/api/controllers", async (req, res, next) => {
     const displayName = String(label ?? "").trim();
     const speciality = String(caption ?? "").trim() || "Controleur";
     const usernameBase = controllerCode.toLowerCase().replace(/[^a-z0-9]+/g, "_") || "controleur";
-    const username = `${usernameBase}_${Date.now().toString().slice(-6)}`;
+    const username = `placeholder_${usernameBase}_${Date.now().toString().slice(-6)}`;
 
     await client.query("BEGIN");
-
-    const roleRows = await client.query("SELECT id FROM roles WHERE code = 'controleur'::user_role_code LIMIT 1");
     const userRows = await client.query(
       `
         INSERT INTO users (username, password_hash, display_name, active)
@@ -918,10 +1067,6 @@ app.post("/api/controllers", async (req, res, next) => {
       `,
       [userId, "A definir", controllerCode, speciality]
     );
-
-    if (roleRows.rowCount > 0) {
-      await client.query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", [userId, roleRows.rows[0].id]);
-    }
 
     await client.query("COMMIT");
     res.status(201).json({ ok: true, id: userId });
@@ -1148,6 +1293,41 @@ app.delete("/api/controllers/:resourceId/activities/:blockId", async (req, res, 
 app.patch("/api/timeline/ships/:resourceId/blocks/:blockId", async (req, res, next) => {
   try {
     const { start, end } = req.body;
+    const auditRows = await query(
+      `
+        SELECT controller_departure_at, control_start_at, control_end_at, return_to_mainland_at
+        FROM audits
+        WHERE id = $2 AND ship_id = $1
+      `,
+      [req.params.resourceId, req.params.blockId]
+    );
+
+    if (auditRows.length > 0) {
+      const nextDates = recalculateAuditDatesForTimelineRange(auditRows[0], start, end);
+      await query(
+        `
+          UPDATE audits
+          SET
+            controller_departure_at = $3,
+            control_start_at = $4,
+            control_end_at = $5,
+            return_to_mainland_at = $6,
+            updated_at = NOW()
+          WHERE id = $2 AND ship_id = $1
+        `,
+        [
+          req.params.resourceId,
+          req.params.blockId,
+          nextDates.controllerDepartureAt,
+          nextDates.controlStartAt,
+          nextDates.controlEndAt,
+          nextDates.returnToMainlandAt
+        ]
+      );
+      res.json({ ok: true });
+      return;
+    }
+
     const updatedAudit = await query(
       `
         UPDATE audits

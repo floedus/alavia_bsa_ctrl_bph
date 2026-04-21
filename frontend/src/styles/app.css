@@ -31,6 +31,43 @@
   margin: 0;
 }
 
+.checkbox-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.checkbox-list-item {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--text);
+  white-space: nowrap;
+  flex-direction: row !important;
+}
+
+.checkbox-list-item input,
+.checkbox-list-item input[type="checkbox"] {
+  display: inline-block !important;
+  flex: 0 0 auto;
+  width: 16px !important;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+.checkbox-list-item span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .hero-actions-stack {
   align-items: stretch;
   flex-direction: column;
@@ -101,6 +138,15 @@
 
 .timeline-panel {
   width: 100%;
+  overflow: visible !important;
+}
+
+.timeline-panel,
+.timeline-panel .timeline-stack,
+.timeline-panel .timeline-lane-section,
+.timeline-panel .timeline-lane-header,
+.timeline-panel .panel-header {
+  overflow: visible !important;
 }
 
 .timeline-lane-creation {
@@ -199,8 +245,8 @@
 }
 
 .timeline-context-menu {
-  position: absolute;
-  z-index: 60;
+  position: fixed;
+  z-index: 9999;
   display: grid;
   gap: 6px;
   min-width: 220px;

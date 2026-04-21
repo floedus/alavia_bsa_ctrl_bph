@@ -96,6 +96,12 @@ export function updateAudit(id: string, payload: Record<string, unknown>) {
   });
 }
 
+export function deleteAudit(id: string) {
+  return request(`/audits/${id}`, {
+    method: "DELETE"
+  });
+}
+
 export function updateController(id: string, payload: Record<string, unknown>) {
   return request(`/controllers/${id}`, {
     method: "PATCH",

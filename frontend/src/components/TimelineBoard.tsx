@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { AuditStatus, BlockKind, ConstraintStatus, TimelineBlock, TimelineResource } from "../types";
 
@@ -59,6 +60,7 @@ type TimelineBoardProps = {
   creationCategories?: readonly CreationCategory[];
   onCreateBlock?: (resourceId: string, block: TimelineBlock) => void;
   onDeleteBlock?: (resourceId: string, blockId: string) => void;
+  canDeleteBlock?: (block: TimelineBlock) => boolean;
   blockEditPolicy?: "all" | "activities-only";
   headerMode?: "full" | "title-only";
   showScaleHeader?: boolean;
@@ -322,6 +324,7 @@ function TimelineLane({
   creationCategories = [],
   onCreateBlock,
   onDeleteBlock,
+  canDeleteBlock,
   blockEditPolicy = "all"
 }: {
   resource: TimelineResource;
@@ -338,6 +341,7 @@ function TimelineLane({
   creationCategories?: readonly CreationCategory[];
   onCreateBlock?: (resourceId: string, block: TimelineBlock) => void;
   onDeleteBlock?: (resourceId: string, blockId: string) => void;
+  canDeleteBlock?: (block: TimelineBlock) => boolean;
   blockEditPolicy?: "all" | "activities-only";
 }) {
   const laneRef = useRef<HTMLDivElement | null>(null);
@@ -523,7 +527,15 @@ function TimelineLane({
   }
 
   function isBlockDeletable(block?: PositionedBlock | TimelineBlock) {
-    return Boolean(block && block.kind !== "audit");
+    if (!block) {
+      return false;
+    }
+
+    if (canDeleteBlock) {
+      return canDeleteBlock(block);
+    }
+
+    return block.kind !== "audit";
   }
 
   function openCreationMenu(
@@ -536,12 +548,9 @@ function TimelineLane({
 
     event.preventDefault();
     event.stopPropagation();
-    const shellRect = laneShellRef.current?.getBoundingClientRect();
-    const localX = shellRect ? event.clientX - shellRect.left + 8 : event.clientX;
-    const localY = shellRect ? event.clientY - shellRect.top + 8 : event.clientY;
     setContextMenu({
-      x: Math.max(8, localX),
-      y: Math.max(8, localY),
+      x: Math.max(8, event.clientX + 8),
+      y: Math.max(8, event.clientY + 8),
       timestamp: timestampFromPointer(event),
       block
     });
@@ -723,39 +732,42 @@ function TimelineLane({
             </div>
           </div>
         </div>
-        {contextMenu ? (
-          <div
-            className="timeline-context-menu"
-            style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
-          >
-            {creationCategories.map((category) => (
-              <button
-                key={category.code}
-                type="button"
-                className="timeline-context-item"
-                onClick={() => {
-                  setPendingCreation({ category, timestamp: contextMenu.timestamp });
-                  setContextMenu(null);
-                }}
+        {contextMenu
+          ? createPortal(
+              <div
+                className="timeline-context-menu"
+                style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
               >
-                {category.label}
-              </button>
-            ))}
-            {contextMenu.block && isBlockDeletable(contextMenu.block) && onDeleteBlock ? (
-              <button
-                type="button"
-                className="timeline-context-item timeline-context-item-danger"
-                onClick={() => {
-                  void onDeleteBlock(resource.id, contextMenu.block!.id);
-                  setContextMenu(null);
-                }}
-              >
-                Supprimer
-              </button>
-            ) : null}
-            <span className="timeline-context-hint">Choisissez un type puis placez le bloc sur la frise.</span>
-          </div>
-        ) : null}
+                {creationCategories.map((category) => (
+                  <button
+                    key={category.code}
+                    type="button"
+                    className="timeline-context-item"
+                    onClick={() => {
+                      setPendingCreation({ category, timestamp: contextMenu.timestamp });
+                      setContextMenu(null);
+                    }}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+                {contextMenu.block && isBlockDeletable(contextMenu.block) && onDeleteBlock ? (
+                  <button
+                    type="button"
+                    className="timeline-context-item timeline-context-item-danger"
+                    onClick={() => {
+                      void onDeleteBlock(resource.id, contextMenu.block!.id);
+                      setContextMenu(null);
+                    }}
+                  >
+                    Supprimer
+                  </button>
+                ) : null}
+                <span className="timeline-context-hint">Choisissez un type puis placez le bloc sur la frise.</span>
+              </div>,
+              document.body
+            )
+          : null}
       </div>
     </section>
   );
@@ -937,6 +949,7 @@ export function TimelineBoard({
   creationCategories = [],
   onCreateBlock,
   onDeleteBlock,
+  canDeleteBlock,
   blockEditPolicy = "all",
   headerMode = "full",
   showScaleHeader = true
@@ -1158,6 +1171,7 @@ export function TimelineBoard({
             creationCategories={creationCategories}
             onCreateBlock={onCreateBlock}
             onDeleteBlock={onDeleteBlock}
+            canDeleteBlock={canDeleteBlock}
             blockEditPolicy={blockEditPolicy}
           />
         ))}
