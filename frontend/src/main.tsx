@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "../../transfert_ui/styles/icare-theme.css";
+import "./styles/icare-theme.css";
 import "./styles/app.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

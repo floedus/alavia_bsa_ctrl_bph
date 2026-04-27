@@ -120,17 +120,6 @@ optgroup {
   margin: 0;
 }
 
-.hero-copy {
-  max-width: 56ch;
-  color: var(--muted);
-}
-
-.auth-hero-copy {
-  max-width: 62ch;
-  font-size: 1rem;
-  line-height: 1.7;
-}
-
 .hero-context {
   margin: 8px 0 0;
   color: #d7efff;

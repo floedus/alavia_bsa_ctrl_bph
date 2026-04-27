@@ -1882,14 +1882,6 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-              <ul className="simple-list" hidden>
-                {users.map((user) => (
-                  <li key={user.id}>
-                    {user.displayName}
-                    <span>{user.username} • {roleLabel(user.role)}{user.shipCode ? ` • ${user.shipCode}` : ""}</span>
-                  </li>
-                ))}
-              </ul>
             </section>
           ) : null}
         </section>
