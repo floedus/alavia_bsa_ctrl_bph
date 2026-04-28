@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { DateTimeStepper } from "./components/DateTimeStepper";
 import { TimelineBoard } from "./components/TimelineBoard";
 import { TopNav, appNavItems, type AppNavigationItem } from "./components/TopNav";
 import {
+  changePassword as apiChangePassword,
   createController as apiCreateController,
   createControllerActivity as apiCreateControllerActivity,
   createShip as apiCreateShip,
@@ -193,7 +194,7 @@ function buildPlatformCaption(resource: TimelineResource) {
 }
 
 function editableShipDescription(caption: string) {
-  return caption.split("â€¢")[0]?.trim() ?? caption;
+  return caption.split("•")[0]?.trim() ?? caption;
 }
 
 function documentKindLabel(kind: ShipDocument["kind"]) {
@@ -238,7 +239,7 @@ function availableNavItemsForRole(role: UserRole): readonly AppNavigationItem[] 
     case "controleur":
       return ["Planification BPH", "Controleurs", "Documents"];
     case "controleur_planificateur":
-      return ["Planification BPH", "Controleurs", "Vue flotte", "Documents", "Parametres"];
+      return ["Vue flotte", "Planification BPH", "Controleurs", "Documents", "Parametres"];
     case "officier_avia_bph":
       return ["Planification BPH", "Documents"];
   }
@@ -263,7 +264,7 @@ function canDeleteDocuments(role: UserRole) {
 type UploadDocumentType = "cr_chaud" | "cr" | "annexe";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<AppNavigationItem>("Planification BPH");
+  const [activeTab, setActiveTab] = useState<AppNavigationItem>("Vue flotte");
   const [planningDate, setPlanningDate] = useState("2026-04-20");
   const [timelineZoom, setTimelineZoom] = useState(340);
   const [selectedBlock, setSelectedBlock] = useState<TimelineBlock | null>(null);
@@ -286,7 +287,12 @@ export default function App() {
   const [shipCreateError, setShipCreateError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginMode, setLoginMode] = useState<"login" | "change-password">("login");
+  const [currentPasswordDraft, setCurrentPasswordDraft] = useState("");
+  const [nextPasswordDraft, setNextPasswordDraft] = useState("");
+  const [confirmPasswordDraft, setConfirmPasswordDraft] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [auditFormError, setAuditFormError] = useState<string | null>(null);
   const [timelineActionError, setTimelineActionError] = useState<string | null>(null);
   const [documentActionError, setDocumentActionError] = useState<string | null>(null);
@@ -503,19 +509,56 @@ export default function App() {
 
   async function submitLogin() {
     setAuthError(null);
+    setAuthInfo(null);
     setLoading(true);
     try {
       const payload = await apiLogin(loginUsername, loginPassword);
       setBackendAvailable(true);
       setLoadError(null);
       applyBootstrapPayload(payload);
-      setActiveTab("Planification BPH");
+      setActiveTab(availableNavItemsForRole(payload.currentUser.role)[0]);
       setLoginPassword("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function submitPasswordChange() {
+    setAuthError(null);
+    setAuthInfo(null);
+
+    if (!loginUsername.trim() || !currentPasswordDraft || !nextPasswordDraft || !confirmPasswordDraft) {
+      setAuthError("Tous les champs sont obligatoires pour modifier le mot de passe.");
+      return;
+    }
+
+    if (nextPasswordDraft !== confirmPasswordDraft) {
+      setAuthError("La confirmation du nouveau mot de passe ne correspond pas.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiChangePassword(loginUsername.trim(), currentPasswordDraft, nextPasswordDraft);
+      setAuthInfo("Mot de passe modifie. Vous pouvez maintenant vous connecter.");
+      setLoginMode("login");
+      setLoginPassword("");
+      setCurrentPasswordDraft("");
+      setNextPasswordDraft("");
+      setConfirmPasswordDraft("");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openAuditPlanning(shipId: string) {
+    setPlanningShipId(shipId);
+    setPlanningScrollRatio(0);
+    setActiveTab("Planification BPH");
   }
 
   function logout() {
@@ -528,6 +571,7 @@ export default function App() {
     setFleetRecords(cloneRecords(auditTable));
     setShipDocuments(cloneDocumentGroups(documentGroups));
     setUsers(mockUsers);
+    setActiveTab("Vue flotte");
   }
 
   async function uploadAuditDocuments(auditId: string, files: FileList | null, documentType: UploadDocumentType) {
@@ -1020,8 +1064,8 @@ export default function App() {
       displayName: user.displayName,
       role: user.role,
       password: password?.trim() ? password.trim() : undefined,
-      controllerId: user.controllerId ?? null,
-      shipId: user.shipId ?? null
+      controllerId: user.controllerId || null,
+      shipId: user.shipId || null
     });
     await refreshData(currentUserId);
   }
@@ -1095,11 +1139,14 @@ export default function App() {
                       onChange={(event) =>
                         setSelectedBlock((current) =>
                           current && current.kind === "audit"
-                            ? {
-                                ...current,
-                                start: fromDateValue(event.target.value) ?? current.start,
-                                controlStartAt: fromDateValue(event.target.value)
-                              }
+                            ? (() => {
+                                const nextStart = fromDateValue(event.target.value) ?? current.start;
+                                return {
+                                  ...current,
+                                  start: nextStart,
+                                  controlStartAt: nextStart
+                                };
+                              })()
                             : current
                         )
                       }
@@ -1113,11 +1160,14 @@ export default function App() {
                       onChange={(event) =>
                         setSelectedBlock((current) =>
                           current && current.kind === "audit"
-                            ? {
-                                ...current,
-                                end: fromDateValue(event.target.value) ?? current.end,
-                                controlEndAt: fromDateValue(event.target.value)
-                              }
+                            ? (() => {
+                                const nextEnd = fromDateValue(event.target.value) ?? current.end;
+                                return {
+                                  ...current,
+                                  end: nextEnd,
+                                  controlEndAt: nextEnd
+                                };
+                              })()
                             : current
                         )
                       }
@@ -1154,7 +1204,7 @@ export default function App() {
                     </select>
                   </label>
                   <label className="mission-form">
-                    <span className="section-label">Controleurs affectes</span>
+                      <span className="section-label">Controleurs affectes</span>
                     <div className="checkbox-list">
                       {controllerOptions.map((controller) => {
                         const checked = (selectedBlock.assignedControllerIds ?? []).includes(controller.id);
@@ -1235,10 +1285,21 @@ export default function App() {
       <div className="app-shell">
         <main className="workspace">
           <section className="panel">
+            <div className="login-hero-card">
+              <div className="login-hero-cocarde hero-cocarde-image" />
+              <div className="login-hero-copy">
+                <p className="eyebrow">Marine Nationale • ALAVIA</p>
+                <h1>Planification BSA des controles aeronautiques BPH</h1>
+                <p>
+                  Outil de planification et de suivi des audits BPH, des activites navires, des disponibilites
+                  controleurs et du corpus documentaire associe.
+                </p>
+              </div>
+            </div>
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Acces securise</p>
-                <h2>Connexion a la planification BPH</h2>
+                <h2>{loginMode === "login" ? "Connexion a la planification BPH" : "Modification du mot de passe"}</h2>
               </div>
             </div>
             <div className="selection-card">
@@ -1246,21 +1307,55 @@ export default function App() {
                 <span className="section-label">Identifiant</span>
                 <input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} />
               </label>
-              <label className="mission-form">
-                <span className="section-label">Mot de passe</span>
-                <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
-              </label>
+              {loginMode === "login" ? (
+                <label className="mission-form">
+                  <span className="section-label">Mot de passe</span>
+                  <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
+                </label>
+              ) : (
+                <>
+                  <label className="mission-form">
+                    <span className="section-label">Ancien mot de passe</span>
+                    <input type="password" value={currentPasswordDraft} onChange={(event) => setCurrentPasswordDraft(event.target.value)} />
+                  </label>
+                  <label className="mission-form">
+                    <span className="section-label">Nouveau mot de passe</span>
+                    <input type="password" value={nextPasswordDraft} onChange={(event) => setNextPasswordDraft(event.target.value)} />
+                  </label>
+                  <label className="mission-form">
+                    <span className="section-label">Confirmation du nouveau mot de passe</span>
+                    <input type="password" value={confirmPasswordDraft} onChange={(event) => setConfirmPasswordDraft(event.target.value)} />
+                  </label>
+                </>
+              )}
               {authError ? <div className="auth-banner auth-banner-subtle"><span>{authError}</span></div> : null}
+              {authInfo ? <div className="auth-banner auth-banner-subtle"><span>{authInfo}</span></div> : null}
               {loadError ? <div className="auth-banner auth-banner-subtle"><span>API indisponible: {loadError}</span></div> : null}
               <div className="ship-card-actions">
-                <button type="button" className="primary-button" onClick={() => void submitLogin()} disabled={loading}>
-                  {loading ? "Connexion..." : "Se connecter"}
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => void (loginMode === "login" ? submitLogin() : submitPasswordChange())}
+                  disabled={loading}
+                >
+                  {loading ? "Traitement..." : loginMode === "login" ? "Se connecter" : "Modifier le mot de passe"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setAuthError(null);
+                    setAuthInfo(null);
+                    setLoginMode((current) => (current === "login" ? "change-password" : "login"));
+                  }}
+                >
+                  {loginMode === "login" ? "Modifier mon mot de passe" : "Revenir a la connexion"}
                 </button>
               </div>
             </div>
           </section>
         </main>
-        <div className="app-credit">Développement - Conception Codex : CV Florian Edus</div>
+        <div className="app-credit">DéD?veloppement - Conception Codex : CV Florian Edus</div>
       </div>
     );
   }
@@ -1308,45 +1403,6 @@ export default function App() {
         <section className="stack">
           {activeTab === "Planification BPH" ? (
             <>
-              <section className="panel">
-                <div className="panel-header">
-                  <div>
-                    <p className="eyebrow">Navigation metier</p>
-                    <h2>Batiments suivis</h2>
-                  </div>
-                  <div className="date-chip">{canPlanAudits(currentUser.role) ? "Planification activee" : "Lecture seule sur les navires"}</div>
-                </div>
-                <div className="ship-card-grid">
-                  {visiblePlatforms.map((ship) => (
-                    <article key={ship.id} className="ship-card">
-                      <div className="ship-card-head">
-                        <div>
-                          <strong>{ship.label}</strong>
-                          <span>{ship.code}</span>
-                        </div>
-                        <span className="status planned">{ship.periodicityMonths ?? "-"} mois</span>
-                      </div>
-                      <p>{ship.caption}</p>
-                      <div className="ship-card-actions">
-                        {ship.latestReport ? <button className="secondary-button compact-button">{ship.latestReport}</button> : null}
-                        {ship.latestHotReport ? <button className="secondary-button compact-button">{ship.latestHotReport}</button> : null}
-                        {canPlanAudits(currentUser.role) ? (
-                          <button
-                            className="primary-button compact-button"
-                            onClick={() => {
-                              setPlanningShipId((current) => (current === ship.id ? null : ship.id));
-                              setPlanningScrollRatio(0);
-                            }}
-                          >
-                            {planningShipId === ship.id ? "Quitter le mode audit" : "Planifier un audit"}
-                          </button>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-
               {selectedShipForPlanning ? (
                 <section className="stack">
                   <section className="panel">
@@ -1515,6 +1571,7 @@ export default function App() {
                       <th>Dernier CR</th>
                       <th>Dernier CR a chaud</th>
                       <th>Statut</th>
+                      {canPlanAudits(currentUser.role) ? <th>Action</th> : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -1527,6 +1584,17 @@ export default function App() {
                         <td><button className="secondary-button compact-button">{record.latestReport}</button></td>
                         <td><button className="secondary-button compact-button">{record.latestHotReport}</button></td>
                         <td className={`status ${record.status}`}>{record.status}</td>
+                        {canPlanAudits(currentUser.role) ? (
+                          <td>
+                            <button
+                              type="button"
+                              className="primary-button compact-button"
+                              onClick={() => void openAuditPlanning(record.id)}
+                            >
+                              Planifier un audit
+                            </button>
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -1890,3 +1958,6 @@ export default function App() {
     </div>
   );
 }
+
+
+

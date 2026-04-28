@@ -846,6 +846,47 @@ app.post("/api/auth/login", async (req, res, next) => {
   }
 });
 
+app.post("/api/auth/change-password", async (req, res, next) => {
+  try {
+    const username = String(req.body.username ?? "").trim();
+    const currentPassword = String(req.body.currentPassword ?? "");
+    const nextPassword = String(req.body.nextPassword ?? "");
+
+    if (!username || !currentPassword || !nextPassword) {
+      res.status(400).json({ error: "Tous les champs du changement de mot de passe sont obligatoires." });
+      return;
+    }
+
+    const rows = await query(
+      `
+        SELECT u.id, u.password_hash AS "passwordHash"
+        FROM users u
+        WHERE u.active = TRUE AND lower(u.username) = lower($1)
+        LIMIT 1
+      `,
+      [username]
+    );
+
+    if (!rows[0] || !verifyPassword(currentPassword, rows[0].passwordHash)) {
+      res.status(401).json({ error: "Ancien mot de passe invalide." });
+      return;
+    }
+
+    await query(
+      `
+        UPDATE users
+        SET password_hash = $2, updated_at = NOW()
+        WHERE id = $1
+      `,
+      [rows[0].id, hashPassword(nextPassword)]
+    );
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/ships", async (req, res, next) => {
   const client = await pool.connect();
   try {

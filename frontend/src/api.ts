@@ -50,6 +50,13 @@ export function login(username: string, password: string) {
   }) as Promise<LoginPayload>;
 }
 
+export function changePassword(username: string, currentPassword: string, nextPassword: string) {
+  return request("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ username, currentPassword, nextPassword })
+  });
+}
+
 export function fetchBootstrap(userId?: string) {
   const suffix = userId ? `?userId=${encodeURIComponent(userId)}` : "";
   return request(`/bootstrap${suffix}`) as Promise<BootstrapPayload>;

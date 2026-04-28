@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { AuditStatus, BlockKind, ConstraintStatus, TimelineBlock, TimelineResource } from "../types";
@@ -317,7 +317,9 @@ function TimelineLane({
   windowStart,
   windowEnd,
   duration,
+  monthSegments,
   daySegments,
+  showDayLabels,
   minWidth,
   setScrollNode,
   readOnly = false,
@@ -334,7 +336,9 @@ function TimelineLane({
   windowStart: number;
   windowEnd: number;
   duration: number;
+  monthSegments: MonthSegment[];
   daySegments: DaySegment[];
+  showDayLabels: boolean;
   minWidth: string;
   setScrollNode: (node: HTMLDivElement | null) => void;
   readOnly?: boolean;
@@ -601,6 +605,36 @@ function TimelineLane({
           className="timeline-scroll timeline-lane-scroll"
           onContextMenu={(event) => openCreationMenu(event)}
         >
+          <div className="timeline-lane-scale" style={{ minWidth }}>
+            <div className="timeline-lane-scale-months">
+              {monthSegments.map((segment) => (
+                <div
+                  key={`${resource.id}-month-${segment.key}`}
+                  className="timeline-lane-scale-month"
+                  style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+                >
+                  {segment.label}
+                </div>
+              ))}
+            </div>
+            <div className="timeline-lane-scale-days">
+              {daySegments.map((segment) => (
+                <div
+                  key={`${resource.id}-scale-${segment.key}`}
+                  className={[
+                    "timeline-lane-scale-day",
+                    showDayLabels ? "is-readable" : "is-condensed",
+                    segment.isWeekend ? "is-weekend" : "",
+                    segment.isWeekStart ? "is-week-start" : ""
+                  ].join(" ").trim()}
+                  style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+                  title={`${segment.label} ${segment.dayNumber}`}
+                >
+                  {showDayLabels ? <span>{segment.dayNumber}</span> : null}
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="timeline-canvas timeline-year-canvas" style={{ minWidth }}>
             <div className="timeline-year-grid" aria-hidden="true">
               {overdueSegment ? (
@@ -1168,7 +1202,9 @@ export function TimelineBoard({
             windowStart={windowStart}
             windowEnd={windowEnd}
             duration={duration}
+            monthSegments={monthSegments}
             daySegments={daySegments}
+            showDayLabels={showDayLabels}
             minWidth={minWidth}
             setScrollNode={(node) => {
               laneScrollRefs.current[resource.id] = node;
@@ -1185,3 +1221,4 @@ export function TimelineBoard({
     </section>
   );
 }
+

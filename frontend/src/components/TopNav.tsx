@@ -7,9 +7,9 @@ export type AppNavigationItem =
   | "Utilisateurs";
 
 export const appNavItems: readonly AppNavigationItem[] = [
+  "Vue flotte",
   "Planification BPH",
   "Controleurs",
-  "Vue flotte",
   "Documents",
   "Parametres",
   "Utilisateurs"

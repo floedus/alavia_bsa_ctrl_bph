@@ -31,6 +31,39 @@
   margin: 0;
 }
 
+.login-hero-card {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(127, 209, 185, 0.05));
+}
+
+.login-hero-cocarde {
+  width: 120px;
+  height: 120px;
+  border-radius: 24px;
+}
+
+.login-hero-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.login-hero-copy h1,
+.login-hero-copy p {
+  margin: 0;
+}
+
+.login-hero-copy p:last-child {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .checkbox-list {
   display: grid;
   gap: 8px;
@@ -245,6 +278,63 @@
   overflow: visible;
 }
 
+.timeline-lane-scale {
+  position: relative;
+  height: 40px;
+  margin-bottom: 10px;
+}
+
+.timeline-lane-scale-months,
+.timeline-lane-scale-days {
+  position: relative;
+}
+
+.timeline-lane-scale-months {
+  height: 18px;
+}
+
+.timeline-lane-scale-days {
+  height: 22px;
+}
+
+.timeline-lane-scale-month,
+.timeline-lane-scale-day {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.timeline-lane-scale-month {
+  padding: 2px 6px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(127, 209, 185, 0.84);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-lane-scale-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid rgba(255, 255, 255, 0.03);
+  color: rgba(232, 240, 245, 0.34);
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-lane-scale-day.is-weekend {
+  background: rgba(159, 78, 78, 0.1);
+  color: rgba(255, 205, 205, 0.6);
+}
+
+.timeline-lane-scale-day.is-week-start {
+  border-left: 1px solid rgba(127, 209, 185, 0.22);
+}
+
 .timeline-context-menu {
   position: fixed;
   z-index: 9999;
@@ -351,7 +441,7 @@
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .document-ship-toggle {
@@ -465,8 +555,8 @@
 
 .document-upload-popover {
   position: absolute;
-  top: 40px;
   right: 0;
+  bottom: 42px;
   z-index: 30;
   width: 260px;
   display: grid;
@@ -556,6 +646,15 @@
 }
 
 @media (max-width: 720px) {
+  .login-hero-card {
+    grid-template-columns: 1fr;
+  }
+
+  .login-hero-cocarde {
+    width: 96px;
+    height: 96px;
+  }
+
   .form-grid {
     grid-template-columns: 1fr;
   }
